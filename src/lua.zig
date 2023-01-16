@@ -64,13 +64,17 @@ pub inline fn push(L: *c.lua_State, value: anytype) void {
         } else {
             push(L, null);
         },
+        .Enum => {
+            const tag = @tagName(value);
+            _ = c.lua_pushlstring(L, tag, tag.len);
+        },
         else => @compileError("unable to coerce from type '" ++ @typeName(T) ++ "'"),
     }
 }
 
 pub inline fn checkArg(L: *c.lua_State, comptime T: type, idx: c_int) T {
     switch (@typeInfo(T)) {
-        .Bool => c.lua_toboolean(L, idx) != 0,
+        .Bool => return c.lua_toboolean(L, idx) != 0,
         .Int => return std.math.cast(T, c.luaL_checkinteger(L, idx)) orelse {
             _ = c.luaL_argerror(L, idx, "out of range");
             unreachable;

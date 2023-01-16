@@ -1,12 +1,14 @@
 const std = @import("std");
 pub const lua = @import("lua.zig");
 
+const fs = @import("fs.zig");
+
 const library = .{
-    .{ .name = "fs", .table = @import("fs.zig").library },
+    .{ .name = "fs", .table = fs.library },
 };
 
 pub const userdata = .{
-    .{ .name = "File", .type = @import("fs.zig").File },
+    .{ .name = "File", .type = fs.File },
 };
 
 export fn luaopen_luz(L: *lua.lua_State) c_int {
