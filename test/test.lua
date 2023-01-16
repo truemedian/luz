@@ -1,8 +1,4 @@
-package.cpath = package.cpath .. ";../zig-out/lib/lib?.so"
+package.cpath = arg[1]
 local luz = require('luz')
 
-local fd = luz.fs.create("test.txt")
-
-p(luz)
-p(fd)
-p(getmetatable(fd))
+print("Works", arg[1]:match("[^/]+$"))
