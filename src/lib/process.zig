@@ -16,11 +16,6 @@ pub const bindings = struct {
     }
 
     pub fn env(L: *State) !c_int {
-        if (!luz.luz_has_init) {
-            L.pusherror(error.NotInitialized);
-            return 2;
-        }
-
         var map = try std.process.getEnvMap(allocator);
         defer map.deinit();
 
@@ -42,11 +37,8 @@ pub const bindings = struct {
             return 2;
         }
 
-        const list = try std.process.argsAlloc(allocator);
-        defer std.process.argsFree(allocator, list);
-
-        L.createtable(@intCast(State.Size, list.len), 0);
-        for (list, 0..) |item, i| {
+        L.createtable(@intCast(State.Size, std.os.argv.len), 0);
+        for (std.os.argv, 0..) |item, i| {
             L.push(item);
             L.rawseti(-2, i + 1);
         }

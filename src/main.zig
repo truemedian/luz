@@ -28,15 +28,10 @@ pub const resources = struct {
 export fn luz_setup(
     c_argc: c_int,
     c_argv: [*][*:0]c_char,
-    c_envp: [*:null]?[*:0]c_char,
     handle_segfault: c_int,
     handle_sigpipe: c_int,
 ) void {
-    var env_count: usize = 0;
-    while (c_envp[env_count] != null) : (env_count += 1) {}
-
     std.os.argv = @ptrCast([*][*:0]u8, c_argv)[0..@intCast(usize, c_argc)];
-    std.os.environ = @ptrCast([*][*:0]u8, c_envp)[0..env_count];
 
     if (handle_segfault != 0) {
         std.debug.maybeEnableSegfaultHandler();

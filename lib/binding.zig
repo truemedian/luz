@@ -723,14 +723,18 @@ pub const State = opaque {
 
     // coroutine functions
 
-    pub fn yield(L: *State, nresults: Size) noreturn {
-        if (c.LUA_VERSION_NUM >= 502) {
+    pub fn yield(L: *State, nresults: Size) c_int {
+        if (c.LUA_VERSION_NUM >= 503) {
             _ = c.lua_yieldk(to(L), nresults, 0, null);
             unreachable;
         }
 
-        _ = c.lua_yield(to(L), nresults);
-        unreachable;
+        // before 5.3, lua_yield returns a magic value that MUST be returned to Lua's core
+        if (c.LUA_VERSION_NUM >= 502) {
+            return c.lua_yieldk(to(L), nresults, 0, null);
+        }
+
+        return c.lua_yield(to(L), nresults);
     }
 
     pub fn @"resume"(L: *State, nargs: Size) ThreadStatus {
