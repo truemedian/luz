@@ -1265,7 +1265,7 @@ pub const State = opaque {
 
                     const str = L.tolstring(idx).?;
                     if (str.len != info.len)
-                        L.check_numerror(name, err_len, str.len);
+                        L.check_numerror(name, err_len, @intCast(Integer, str.len));
 
                     return str[0..info.len].*;
                 }
@@ -1401,7 +1401,7 @@ pub const State = opaque {
             buffer.check.check(buffer.state, 0);
 
             const ptr = if (c.LUA_VERSION_NUM >= 502)
-                c.luaL_prepbuffsize(buffer.state.to(), &buffer.buf, max_size)
+                c.luaL_prepbuffsize(&buffer.buf, max_size)
             else
                 c.luaL_prepbuffer(&buffer.buf);
 

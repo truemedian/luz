@@ -30,7 +30,7 @@ pub const bindings = struct {
             const buf = try allocator.alloc(u8, len);
             defer allocator.free(buf);
 
-            base64.standard.Decoder.decode(buf, str);
+            try base64.standard.Decoder.decode(buf, str);
             L.push(buf);
 
             return 1;
@@ -58,7 +58,7 @@ pub const bindings = struct {
             const buf = try allocator.alloc(u8, len);
             defer allocator.free(buf);
 
-            base64.standard_no_pad.Decoder.decode(buf, str);
+            try base64.standard_no_pad.Decoder.decode(buf, str);
             L.push(buf);
 
             return 1;
@@ -86,7 +86,7 @@ pub const bindings = struct {
             const buf = try allocator.alloc(u8, len);
             defer allocator.free(buf);
 
-            base64.url_safe.Decoder.decode(buf, str);
+            try base64.url_safe.Decoder.decode(buf, str);
             L.push(buf);
 
             return 1;
@@ -114,7 +114,7 @@ pub const bindings = struct {
             const buf = try allocator.alloc(u8, len);
             defer allocator.free(buf);
 
-            base64.url_safe_no_pad.Decoder.decode(buf, str);
+            try base64.url_safe_no_pad.Decoder.decode(buf, str);
             L.push(buf);
 
             return 1;

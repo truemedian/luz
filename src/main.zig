@@ -7,20 +7,26 @@ pub var luz_has_init: bool = false;
 pub const allocator = std.heap.c_allocator;
 
 pub const libraries = struct {
+    pub const base64 = @import("lib/base64.zig");
     pub const os = @import("lib/os.zig");
     pub const process = @import("lib/process.zig");
+    pub const rand = @import("lib/rand.zig");
     pub const time = @import("lib/time.zig");
 };
 
 pub const bindings = struct {
+    pub const base64 = libraries.base64.bindings;
     pub const os = libraries.os.bindings;
     pub const process = libraries.process.bindings;
+    pub const rand = libraries.rand.bindings;
     pub const time = libraries.time.bindings;
 };
 
 pub const resources = struct {
+    pub const base64 = libraries.base64.resources;
     pub const os = libraries.os.resources;
     pub const process = libraries.process.resources;
+    pub const rand = libraries.rand.resources;
     pub const time = libraries.time.resources;
 };
 
