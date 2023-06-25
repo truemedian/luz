@@ -1260,10 +1260,20 @@ pub const State = opaque {
                 return @floatCast(T, L.tonumber(idx));
             },
             .Array => |info| {
+                if (info.child == u8 and L.isstring(idx)) {
+                    const err_len = comptime comptimePrint("string of length {d}", .{info.len});
+
+                    const str = L.tolstring(idx).?;
+                    if (str.len != info.len)
+                        L.check_numerror(name, err_len, str.len);
+
+                    return str[0..info.len].*;
+                }
+
                 if (!L.istable(idx))
                     L.check_typeerror(name, "table", idx);
 
-                const err_len = comptime comptimePrint("length of {d}", .{info.len});
+                const err_len = comptime comptimePrint("table of length {d}", .{info.len});
 
                 const tlen = L.lenOf(idx);
                 if (tlen != info.len)
@@ -1370,81 +1380,81 @@ pub const State = opaque {
         const ptr = c.luaL_checkudata(to(L), arg, literal(@typeName(T))).?;
         return @ptrCast(*align(@alignOf(usize)) T, @alignCast(@alignOf(usize), ptr));
     }
-};
 
-pub const Buffer = struct {
-    state: *State,
-    check: StackCheck,
-    buf: c.luaL_Buffer,
+    pub const Buffer = struct {
+        state: *State,
+        check: StackCheck,
+        buf: c.luaL_Buffer,
 
-    pub fn init(L: *State) Buffer {
-        var res: Buffer = undefined;
-        res.state = L;
-        res.buf = std.mem.zeroes(c.luaL_Buffer);
+        pub fn init(L: *State) Buffer {
+            var res: Buffer = undefined;
+            res.state = L;
+            res.buf = std.mem.zeroes(c.luaL_Buffer);
 
-        c.luaL_buffinit(L.to(), &res.buf);
+            c.luaL_buffinit(L.to(), &res.buf);
 
-        res.check = StackCheck.init(L);
-        return res;
-    }
-
-    pub fn reserve(buffer: *Buffer, max_size: usize) []u8 {
-        buffer.check.check(buffer.state, 0);
-
-        const ptr = if (c.LUA_VERSION_NUM >= 502)
-            c.luaL_prepbuffsize(buffer.state.to(), &buffer.buf, max_size)
-        else
-            c.luaL_prepbuffer(&buffer.buf);
-
-        const clamped_len = if (c.LUA_VERSION_NUM >= 502)
-            max_size
-        else
-            @min(max_size, c.LUAL_BUFFERSIZE);
-
-        buffer.check = StackCheck.init(buffer.state);
-        return ptr[0..clamped_len];
-    }
-
-    pub fn commit(buffer: *Buffer, size: usize) void {
-        buffer.check.check(buffer.state, 0);
-
-        // TODO: translate-c bug: c.luaL_addsize(&buffer.buf, size);
-        if (c.LUA_VERSION_NUM >= 502) {
-            buffer.buf.n += size;
-        } else {
-            buffer.buf.p += size;
+            res.check = StackCheck.init(L);
+            return res;
         }
 
-        buffer.check = StackCheck.init(buffer.state);
-    }
+        pub fn reserve(buffer: *Buffer, max_size: usize) []u8 {
+            buffer.check.check(buffer.state, 0);
 
-    pub fn addchar(buffer: *Buffer, char: u8) void {
-        const str = buffer.reserve(1);
-        str[0] = char;
-        buffer.commit(1);
-    }
+            const ptr = if (c.LUA_VERSION_NUM >= 502)
+                c.luaL_prepbuffsize(buffer.state.to(), &buffer.buf, max_size)
+            else
+                c.luaL_prepbuffer(&buffer.buf);
 
-    pub fn addstring(buffer: *Buffer, str: []const u8) void {
-        buffer.check.check(buffer.state, 0);
+            const clamped_len = if (c.LUA_VERSION_NUM >= 502)
+                max_size
+            else
+                @min(max_size, c.LUAL_BUFFERSIZE);
 
-        c.luaL_addlstring(&buffer.buf, str.ptr, str.len);
+            buffer.check = StackCheck.init(buffer.state);
+            return ptr[0..clamped_len];
+        }
 
-        buffer.check = StackCheck.init(buffer.state);
-    }
+        pub fn commit(buffer: *Buffer, size: usize) void {
+            buffer.check.check(buffer.state, 0);
 
-    pub fn addvalue(buffer: *Buffer) void {
-        buffer.check.check(buffer.state, 1); // one item should be on the stack
+            // TODO: translate-c bug: c.luaL_addsize(&buffer.buf, size);
+            if (c.LUA_VERSION_NUM >= 502) {
+                buffer.buf.n += size;
+            } else {
+                buffer.buf.p += size;
+            }
 
-        c.luaL_addvalue(&buffer.buf);
+            buffer.check = StackCheck.init(buffer.state);
+        }
 
-        buffer.check = StackCheck.init(buffer.state);
-    }
+        pub fn addchar(buffer: *Buffer, char: u8) void {
+            const str = buffer.reserve(1);
+            str[0] = char;
+            buffer.commit(1);
+        }
 
-    pub fn final(buffer: *Buffer) void {
-        buffer.check.check(buffer.state, 0);
+        pub fn addstring(buffer: *Buffer, str: []const u8) void {
+            buffer.check.check(buffer.state, 0);
 
-        c.luaL_pushresult(&buffer.buf);
-    }
+            c.luaL_addlstring(&buffer.buf, str.ptr, str.len);
+
+            buffer.check = StackCheck.init(buffer.state);
+        }
+
+        pub fn addvalue(buffer: *Buffer) void {
+            buffer.check.check(buffer.state, 1); // one item should be on the stack
+
+            c.luaL_addvalue(&buffer.buf);
+
+            buffer.check = StackCheck.init(buffer.state);
+        }
+
+        pub fn final(buffer: *Buffer) void {
+            buffer.check.check(buffer.state, 0);
+
+            c.luaL_pushresult(&buffer.buf);
+        }
+    };
 };
 
 pub fn wrapAnyFn(comptime func: anytype) State.CFn {
