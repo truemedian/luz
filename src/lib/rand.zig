@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const luz = @import("../main.zig");
 
-const State = luz.State;
+const State = luz.lua.State;
 const allocator = luz.allocator;
 
 const rand = std.rand;
@@ -17,7 +17,7 @@ fn BindRandom(comptime T: type) type {
                 const size = L.check(u31, 2);
 
                 var index: u32 = 0;
-                var b = State.Buffer.init(L);
+                var b = luz.lua.Buffer.init(L);
 
                 const r: rand.Random = impl.random();
 

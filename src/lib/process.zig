@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const luz = @import("../main.zig");
 
-const State = luz.State;
+const State = luz.lua.State;
 const allocator = luz.allocator;
 
 pub const bindings = struct {

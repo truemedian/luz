@@ -1,7 +1,5 @@
 const std = @import("std");
-const lua = @import("lua");
-
-pub const State = lua.State;
+pub const lua = @import("lua");
 
 pub var luz_has_init: bool = false;
 pub const allocator = std.heap.c_allocator;
