@@ -9,25 +9,9 @@ pub const libraries = struct {
     pub const os = @import("lib/os.zig");
     pub const process = @import("lib/process.zig");
     pub const rand = @import("lib/rand.zig");
+    pub const Thread = @import("lib/Thread.zig");
     pub const time = @import("lib/time.zig");
 };
-
-pub const bindings = struct {
-    pub const base64 = libraries.base64.bindings;
-    pub const os = libraries.os.bindings;
-    pub const process = libraries.process.bindings;
-    pub const rand = libraries.rand.bindings;
-    pub const time = libraries.time.bindings;
-};
-
-pub const resources = struct {
-    pub const base64 = libraries.base64.resources;
-    pub const os = libraries.os.resources;
-    pub const process = libraries.process.resources;
-    pub const rand = libraries.rand.resources;
-    pub const time = libraries.time.resources;
-};
-
 
 export fn luz_setup(
     c_argc: c_int,
@@ -35,7 +19,7 @@ export fn luz_setup(
     handle_segfault: c_int,
     handle_sigpipe: c_int,
 ) void {
-    std.os.argv = @ptrCast([*][*:0]u8, c_argv)[0..@intCast(usize, c_argc)];
+    std.os.argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
 
     if (handle_segfault != 0) {
         std.debug.maybeEnableSegfaultHandler();
@@ -49,16 +33,24 @@ export fn luz_setup(
 }
 
 fn luzopen_luz(L: *lua.State) c_int {
-    inline for (comptime std.meta.declarations(resources)) |decl| {
-        inline for (@field(resources, decl.name)) |resource| {
+    const libraries_list = @typeInfo(libraries).Struct.decls;
+
+    inline for (libraries_list) |decl| {
+        inline for (@field(libraries, decl.name).resources) |resource| {
             L.registerResource(resource.type, resource.metatable);
         }
     }
 
-    L.push(bindings);
+    L.createtable(0, libraries_list.len);
+    inline for (libraries_list) |decl| {
+        L.push(@field(libraries, decl.name).bindings);
+        L.setfield(-2, decl.name ++ "\x00");
+    }
+
     return 1;
 }
 
+pub const entrypoint = lua.exportAs(luzopen_luz, "luz");
 comptime {
-    lua.exportAs(luzopen_luz, "luz");
+    _ = entrypoint;
 }

@@ -2,8 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const luz = @import("../main.zig");
+const lua = @import("lua");
 
-const State = luz.lua.State;
+const State = lua.State;
 const allocator = luz.allocator;
 
 const time = std.time;
@@ -43,7 +44,7 @@ pub const bindings = struct {
         const ms = L.check(f64, 1);
         if (ms < 0.0) return L.throw("sleep duration must be positive", .{});
 
-        const sleeptime = @floatToInt(u64, ms * time.ns_per_ms);
+        const sleeptime: u64 = @intFromFloat(ms * time.ns_per_ms);
 
         time.sleep(sleeptime);
     }

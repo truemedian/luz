@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
 
         shared.addModule("lua", lua_mod);
 
+        shared.unwind_tables = true;
         shared.strip = strip;
         shared.linkSystemLibrary("lua-" ++ ver);
         shared.linkLibC();

@@ -2,8 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const luz = @import("../main.zig");
+const lua = @import("lua");
 
-const State = luz.lua.State;
+const State = lua.State;
 const allocator = luz.allocator;
 
 pub const bindings = struct {

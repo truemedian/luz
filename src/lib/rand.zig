@@ -2,8 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const luz = @import("../main.zig");
+const lua = @import("lua");
 
-const State = luz.lua.State;
+const State = lua.State;
 const allocator = luz.allocator;
 
 const rand = std.rand;
@@ -17,7 +18,7 @@ fn BindRandom(comptime T: type) type {
                 const size = L.check(u31, 2);
 
                 var index: u32 = 0;
-                var b = luz.lua.Buffer.init(L);
+                var b = lua.Buffer.init(L);
 
                 const r: rand.Random = impl.random();
 
@@ -27,7 +28,7 @@ fn BindRandom(comptime T: type) type {
                     r.bytes(ptr);
 
                     b.commit(ptr.len);
-                    index += @intCast(u32, ptr.len);
+                    index += @intCast(ptr.len);
                 }
 
                 b.final();

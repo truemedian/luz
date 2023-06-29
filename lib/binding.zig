@@ -7,6 +7,7 @@ const comptimePrint = std.fmt.comptimePrint;
 pub const c = @cImport({
     @cInclude("lua.h");
     @cInclude("lauxlib.h");
+    @cInclude("lualib.h");
 });
 
 fn literal(comptime str: []const u8) [:0]const u8 {
@@ -104,25 +105,26 @@ pub const State = opaque {
     };
 
     fn to(ptr: *State) *c.lua_State {
-        return @ptrCast(*c.lua_State, ptr);
+        var x: *c.lua_State = @ptrCast(ptr);
+        return x;
     }
 
     // state manipulation
 
-    pub fn newstateWithAllocator(f: AllocFn, ud: ?*anyopaque) !*State {
+    pub fn newstateadvanced(f: AllocFn, ud: ?*anyopaque) !*State {
         const ret = c.lua_newstate(f, ud);
         if (ret == null) return error.OutOfMemory;
-        return @ptrCast(*State, ret.?);
+        return @ptrCast(ret.?);
     }
 
     pub fn close(L: *State) void {
         return c.lua_close(to(L));
     }
 
-    pub fn newthread(L: *State) !*State {
+    pub fn createcoroutine(L: *State) !*State {
         const ptr = c.lua_newthread(to(L));
         if (ptr == null) return error.OutOfMemory;
-        return @ptrCast(*State, ptr.?);
+        return @ptrCast(ptr.?);
     }
 
     pub fn atpanic(L: *State, comptime panicf: anytype) CFn {
@@ -262,19 +264,15 @@ pub const State = opaque {
 
         if (!L.isnumber(index)) return false;
 
-        return @floatToInt(Integer, L.tonumber(index)) == L.tointeger(index);
+        return @as(Integer, @intFromFloat(L.tonumber(index))) == L.tointeger(index);
     }
 
     pub fn isuserdata(L: *State, index: Index) bool {
         return c.lua_isuserdata(to(L), index) != 0;
     }
 
-    pub fn typeOf(L: *State, index: Index) Type {
-        return @intToEnum(Type, c.lua_type(to(L), index));
-    }
-
-    pub fn typename(L: *State, typ: Type) [:0]const u8 {
-        return std.mem.sliceTo(c.lua_typename(to(L), @enumToInt(typ)), 0);
+    pub fn typeof(L: *State, index: Index) Type {
+        return @enumFromInt(c.lua_type(to(L), index));
     }
 
     pub fn tonumber(L: *State, index: Index) Number {
@@ -313,7 +311,7 @@ pub const State = opaque {
         return ptr[0..ptr_len :0];
     }
 
-    pub fn rawlen(L: *State, index: Index) Unsigned {  
+    pub fn rawlen(L: *State, index: Index) usize {
         if (c.LUA_VERSION_NUM >= 502) {
             return c.lua_rawlen(to(L), index);
         }
@@ -326,11 +324,11 @@ pub const State = opaque {
     }
 
     pub fn touserdata(L: *State, comptime T: type, index: Index) ?*align(@alignOf(usize)) T {
-        return @ptrCast(?*align(@alignOf(usize)) T, c.lua_touserdata(to(L), index));
+        return @ptrCast(@alignCast(c.lua_touserdata(to(L), index)));
     }
 
     pub fn tothread(L: *State, index: Index) ?*State {
-        return @ptrCast(?*State, c.lua_tothread(to(L), index));
+        return @ptrCast(c.lua_tothread(to(L), index));
     }
 
     pub fn topointer(L: *State, index: Index) ?*const anyopaque {
@@ -339,8 +337,8 @@ pub const State = opaque {
 
     pub fn arith(L: *State, op: ArithOp) void {
         if (c.LUA_VERSION_NUM >= 502) {
-            if (c.LUA_VERSION_NUM >= 503 or @enumToInt(op) >= 0) {
-                return c.lua_arith(to(L), @enumToInt(op));
+            if (c.LUA_VERSION_NUM >= 503 or @intFromEnum(op) >= 0) {
+                return c.lua_arith(to(L), @intFromEnum(op));
             }
         }
 
@@ -376,7 +374,7 @@ pub const State = opaque {
 
     pub fn compare(L: *State, a: Index, b: Index, op: CompareOp) bool {
         if (c.LUA_VERSION_NUM >= 502) {
-            return c.lua_compare(to(L), a, b, @enumToInt(op)) != 0;
+            return c.lua_compare(to(L), a, b, @intFromEnum(op)) != 0;
         }
 
         switch (op) {
@@ -448,12 +446,8 @@ pub const State = opaque {
         return c.lua_pushinteger(to(L), value);
     }
 
-    pub fn pushlstring(L: *State, value: []const u8) void {
+    pub fn pushstring(L: *State, value: []const u8) void {
         _ = c.lua_pushlstring(to(L), value.ptr, value.len);
-    }
-
-    pub fn pushzstring(L: *State, value: [:0]const u8) void {
-        _ = c.lua_pushstring(to(L), value.ptr);
     }
 
     pub fn pushfstring(L: *State, comptime fmt: [:0]const u8, args: anytype) [:0]const u8 {
@@ -465,12 +459,16 @@ pub const State = opaque {
         return c.lua_pushcclosure(to(L), func, n);
     }
 
+    pub fn pushclosure(L: *State, comptime func: anytype, n: Size) void {
+        return c.lua_pushcclosure(to(L), wrapAnyFn(func), n);
+    }
+
     pub fn pushboolean(L: *State, value: bool) void {
-        return c.lua_pushboolean(to(L), @boolToInt(value));
+        return c.lua_pushboolean(to(L), @intFromBool(value));
     }
 
     pub fn pushlightuserdata(L: *State, ptr: anytype) void {
-        return c.lua_pushlightuserdata(to(L), @constCast(@ptrCast(*const anyopaque, ptr)));
+        return c.lua_pushlightuserdata(to(L), @ptrCast(@constCast(ptr)));
     }
 
     pub fn pushthread(L: *State) bool {
@@ -481,34 +479,34 @@ pub const State = opaque {
 
     pub fn getglobal(L: *State, name: [:0]const u8) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_getglobal(to(L), name.ptr));
+            return @enumFromInt(c.lua_getglobal(to(L), name.ptr));
         }
 
         c.lua_getglobal(to(L), name.ptr);
-        return L.typeOf(-1);
+        return L.typeof(-1);
     }
 
     pub fn gettable(L: *State, index: Index) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_gettable(to(L), index));
+            return @enumFromInt(c.lua_gettable(to(L), index));
         }
 
         c.lua_gettable(to(L), index);
-        return L.typeOf(-1);
+        return L.typeof(-1);
     }
 
     pub fn getfield(L: *State, index: Index, name: [:0]const u8) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_getfield(to(L), index, name.ptr));
+            return @enumFromInt(c.lua_getfield(to(L), index, name.ptr));
         }
 
         c.lua_getfield(to(L), index, name.ptr);
-        return L.typeOf(-1);
+        return L.typeof(-1);
     }
 
     pub fn geti(L: *State, index: Index, n: Integer) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_geti(to(L), index, n));
+            return @enumFromInt(c.lua_geti(to(L), index, n));
         }
 
         const abs = L.absindex(index);
@@ -518,31 +516,31 @@ pub const State = opaque {
 
     pub fn rawget(L: *State, index: Index) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_rawget(to(L), index));
+            return @enumFromInt(c.lua_rawget(to(L), index));
         }
 
         c.lua_rawget(to(L), index);
-        return L.typeOf(-1);
+        return L.typeof(-1);
     }
 
     pub fn rawgeti(L: *State, index: Index, n: Integer) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_rawgeti(to(L), index, n));
+            return @enumFromInt(c.lua_rawgeti(to(L), index, n));
         }
 
         if (n > std.math.maxInt(c_int)) {
             L.pushinteger(n);
             return L.rawget(index);
         } else {
-            c.lua_rawgeti(to(L), index, @intCast(c_int, n));
-            return L.typeOf(-1);
+            c.lua_rawgeti(to(L), index, @as(c_int, @intCast(n)));
+            return L.typeof(-1);
         }
     }
 
     pub fn rawgetp(L: *State, index: Index, ptr: anytype) Type {
         assert(@typeInfo(@TypeOf(ptr)) == .Pointer);
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_rawgetp(to(L), index, @ptrCast(*const anyopaque, ptr)));
+            return @enumFromInt(c.lua_rawgetp(to(L), index, @ptrCast(ptr)));
         }
 
         const abs = L.absindex(index);
@@ -550,8 +548,8 @@ pub const State = opaque {
         return L.rawget(abs);
     }
 
-    pub fn createtable(L: *State, narr: usize, nrec: usize) void {
-        return c.lua_createtable(to(L), @intCast(Size, narr), @intCast(Size, nrec));
+    pub fn createtable(L: *State, narr: Size, nrec: Size) void {
+        return c.lua_createtable(to(L), narr, nrec);
     }
 
     pub fn newuserdata(L: *State, size: Size) *anyopaque {
@@ -585,12 +583,12 @@ pub const State = opaque {
 
     pub fn getuservalue(L: *State, index: Index) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.lua_getuservalue(to(L), index));
+            return @enumFromInt(c.lua_getuservalue(to(L), index));
         }
 
         if (c.LUA_VERSION_NUM >= 502) {
             c.lua_getuservalue(to(L), index);
-            return L.typeOf(-1);
+            return L.typeof(-1);
         }
 
         if (!L.isfulluserdata(index))
@@ -628,27 +626,23 @@ pub const State = opaque {
         return c.lua_rawset(to(L), index);
     }
 
-    pub fn rawseti(L: *State, index: Index, n: usize) void {
+    pub fn rawseti(L: *State, index: Index, n: Size) void {
         if (c.LUA_VERSION_NUM >= 503) {
-            return c.lua_rawseti(to(L), index, @intCast(Integer, n));
+            return c.lua_rawseti(to(L), index, n);
         }
 
-        if (n > std.math.maxInt(c_int)) {
-            L.pushinteger(@intCast(Integer, n));
-            return L.rawset(index);
-        }
-
-        return c.lua_rawseti(to(L), index, @intCast(c_int, n));
+        return c.lua_rawseti(to(L), index, n);
     }
 
     pub fn rawsetp(L: *State, index: Index, ptr: anytype) void {
         assert(@typeInfo(@TypeOf(ptr)) == .Pointer);
         if (c.LUA_VERSION_NUM >= 503) {
-            return c.lua_rawsetp(to(L), index, @ptrCast(*const anyopaque, ptr));
+            return c.lua_rawsetp(to(L), index, @ptrCast(ptr));
         }
 
         const abs = L.absindex(index);
         L.pushlightuserdata(ptr);
+        L.insert(-2);
         return L.rawset(abs);
     }
 
@@ -690,18 +684,20 @@ pub const State = opaque {
         const nres: Index = nresults orelse c.LUA_MULTRET;
 
         if (c.LUA_VERSION_NUM >= 502) {
-            return @intToEnum(ThreadStatus, c.lua_pcallk(to(L), nargs, nres, handler_index, 0, null));
+            return @enumFromInt(c.lua_pcallk(to(L), nargs, nres, handler_index, 0, null));
         }
 
-        return @intToEnum(ThreadStatus, c.lua_pcall(to(L), nargs, nres, handler_index));
+        return @enumFromInt(c.lua_pcall(to(L), nargs, nres, handler_index));
     }
 
     pub fn load(L: *State, reader: anytype, chunkname: [:0]const u8, mode: LoadMode) ThreadStatus {
+        const read = @typeInfo(@TypeOf(reader)).Pointer.child.read;
+
         if (c.LUA_VERSION_NUM >= 502) {
-            return @intToEnum(ThreadStatus, c.lua_load(
+            return @enumFromInt(c.lua_load(
                 to(L),
-                reader.read,
-                &reader,
+                read,
+                reader,
                 chunkname,
                 switch (mode) {
                     .binary => "b",
@@ -712,20 +708,22 @@ pub const State = opaque {
         }
 
         if (reader.mode == .binary and mode == .text)
-            L.throw("attempt to load a binary chunk (mode is 'text')");
+            L.throw("attempt to load a binary chunk (mode is 'text')", .{});
 
         if (reader.mode == .text and mode == .binary)
-            L.throw("attempt to load a text chunk (mode is 'binary')");
+            L.throw("attempt to load a text chunk (mode is 'binary')", .{});
 
-        return @intToEnum(ThreadStatus, c.lua_load(to(L), reader.read, &reader, chunkname));
+        return @enumFromInt(c.lua_load(to(L), read, reader, chunkname));
     }
 
     pub fn dump(L: *State, writer: anytype, strip: bool) ThreadStatus {
-        if (c.LUA_VERSION_NUM >= 502) {
-            return @intToEnum(ThreadStatus, c.lua_dump(to(L), writer.write, &writer, strip));
+        const write = @typeInfo(@TypeOf(writer)).Pointer.child.write;
+
+        if (c.LUA_VERSION_NUM >= 503) {
+            return @enumFromInt(c.lua_dump(to(L), write, writer, @intFromBool(strip)));
         }
 
-        return @intToEnum(ThreadStatus, c.lua_dump(to(L), writer.write, &writer));
+        return @enumFromInt(c.lua_dump(to(L), write, writer));
     }
 
     // coroutine functions
@@ -747,18 +745,18 @@ pub const State = opaque {
     pub fn @"resume"(L: *State, nargs: Size) ThreadStatus {
         if (c.LUA_VERSION_NUM >= 504) {
             var res: c_int = 0;
-            return @intToEnum(ThreadStatus, c.lua_resume(to(L), null, nargs, &res));
+            return @enumFromInt(c.lua_resume(to(L), null, nargs, &res));
         }
 
         if (c.LUA_VERSION_NUM >= 502) {
-            return @intToEnum(ThreadStatus, c.lua_resume(to(L), null, nargs));
+            return @enumFromInt(c.lua_resume(to(L), null, nargs));
         }
 
-        return @intToEnum(ThreadStatus, c.lua_resume(to(L), nargs));
+        return @enumFromInt(c.lua_resume(to(L), nargs));
     }
 
     pub fn status(L: *State) ThreadStatus {
-        return @intToEnum(ThreadStatus, c.lua_status(to(L)));
+        return @enumFromInt(c.lua_status(to(L)));
     }
 
     // isyieldable unimplementable in 5.2 and 5.1
@@ -787,19 +785,17 @@ pub const State = opaque {
             return c.lua_len(to(L), index);
         }
 
-        switch (L.typeOf(index)) {
+        switch (L.typeof(index)) {
             .string => {
-                const olen = @intCast(Integer, c.lua_objlen(to(L), index));
-                return L.pushinteger(olen);
+                return L.pushinteger(@intCast(c.lua_objlen(to(L), index)));
             },
             .table => if (!L.callmeta(index, "__len")) {
-                const olen = @intCast(Integer, c.lua_objlen(to(L), index));
-                return L.pushinteger(olen);
+                return L.pushinteger(@intCast(c.lua_objlen(to(L), index)));
             },
             .userdata => if (!L.callmeta(index, "__len")) {
                 L.throw("attempt to get length of a userdata value", .{});
             },
-            else => L.throw("attempt to get length of a %s value", .{L.typenameOf(index).ptr}),
+            else => L.throw("attempt to get length of a %s value", .{L.typenameof(index).ptr}),
         }
     }
 
@@ -851,21 +847,21 @@ pub const State = opaque {
     }
 
     pub fn gethookcount(L: *State) Size {
-        return @intCast(Size, c.lua_gethookcount(to(L)));
+        return @intCast(c.lua_gethookcount(to(L)));
     }
 
     // auxiliary library
 
     pub fn getmetafield(L: *State, obj: Index, event: [:0]const u8) Type {
         if (c.LUA_VERSION_NUM >= 503) {
-            return @intToEnum(Type, c.luaL_getmetafield(to(L), obj, event.ptr));
+            return @enumFromInt(c.luaL_getmetafield(to(L), obj, event.ptr));
         }
 
         if (c.luaL_getmetafield(to(L), obj, event.ptr) == 0) {
             return .nil;
         }
 
-        return L.typeOf(-1);
+        return L.typeof(-1);
     }
 
     pub fn callmeta(L: *State, obj: Index, event: [:0]const u8) bool {
@@ -883,11 +879,11 @@ pub const State = opaque {
     // checktype replaced with check mechanism
     // checkany replaced with check mechanism
 
-    pub fn ensureType(L: *State, arg: Size, typ: Type) void {
-        c.luaL_checktype(to(L), arg, @enumToInt(typ));
+    pub fn ensuretype(L: *State, arg: Size, typ: Type) void {
+        c.luaL_checktype(to(L), arg, @intFromEnum(typ));
     }
 
-    pub fn ensureExists(L: *State, arg: Size) void {
+    pub fn ensureexists(L: *State, arg: Size) void {
         c.luaL_checkany(to(L), arg);
     }
 
@@ -898,16 +894,16 @@ pub const State = opaque {
         c.luaL_checkstack(to(L), sz, msg.ptr);
     }
 
-    pub fn newmetatableFor(L: *State, tname: [:0]const u8) bool {
+    pub fn newmetatablefor(L: *State, tname: [:0]const u8) bool {
         return c.luaL_newmetatable(to(L), tname.ptr) != 0;
     }
 
-    pub fn setmetatableFor(L: *State, tname: [:0]const u8) void {
+    pub fn setmetatablefor(L: *State, tname: [:0]const u8) void {
         if (c.LUA_VERSION_NUM >= 502) {
             c.luaL_setmetatable(to(L), tname.ptr);
         }
 
-        _ = L.getmetatableFor(tname);
+        _ = L.getmetatablefor(tname);
         L.setmetatable(-2);
     }
 
@@ -924,7 +920,9 @@ pub const State = opaque {
     /// error occurred, if this information is available.
     pub fn throw(L: *State, msg: [:0]const u8, args: anytype) noreturn {
         if (args.len == 0) {
-            L.pushlstring(msg);
+            L.where(1);
+            L.pushstring(msg);
+            L.concat(2);
             L.@"error"();
         } else {
             _ = @call(.auto, c.luaL_error, .{ to(L), msg.ptr } ++ args);
@@ -949,7 +947,7 @@ pub const State = opaque {
 
     pub fn loadstring(L: *State, str: []const u8, chunkname: [:0]const u8, mode: LoadMode) ThreadStatus {
         if (c.LUA_VERSION_NUM >= 502) {
-            return @intToEnum(ThreadStatus, c.luaL_loadbufferx(
+            return @enumFromInt(c.luaL_loadbufferx(
                 to(L),
                 str.ptr,
                 str.len,
@@ -962,24 +960,24 @@ pub const State = opaque {
             ));
         }
 
-        return @intToEnum(ThreadStatus, c.luaL_loadbuffer(to(L), str.ptr, str.len, chunkname));
+        return @enumFromInt(c.luaL_loadbuffer(to(L), str.ptr, str.len, chunkname));
     }
 
-    pub fn newstate() *State {
+    pub fn newstate() !*State {
         const ret = c.luaL_newstate();
         if (ret == null) return error.OutOfMemory;
-        return @ptrCast(*State, ret.?);
+        return @ptrCast(ret.?);
     }
 
-    pub fn lenOf(L: *State, obj: Index) Size {
+    pub fn lenof(L: *State, obj: Index) Size {
         if (c.LUA_VERSION_NUM >= 502) {
-            return @intCast(Size, c.luaL_len(to(L), obj));
+            return @intCast(c.luaL_len(to(L), obj));
         }
 
         L.len(obj);
         const n = L.tointeger(-1);
         L.pop(1);
-        return @intCast(Size, n);
+        return @intCast(n);
     }
 
     pub fn gsub(L: *State, s: [:0]const u8, p: [:0]const u8, r: [:0]const u8) [:0]const u8 {
@@ -1031,11 +1029,11 @@ pub const State = opaque {
             if (ar.namewhat[0] != 0) {
                 _ = L.pushfstring("%s '%s'", .{ ar.namewhat, ar.name });
             } else if (ar.what[0] == 'm') {
-                _ = L.pushlstring("main chunk");
+                _ = L.pushstring("main chunk");
             } else if (ar.what[0] != 'C') {
                 _ = L.pushfstring("function <%s:%d>", .{ &ar.short_src, ar.linedefined });
             } else {
-                _ = L.pushlstring("?");
+                _ = L.pushstring("?");
             }
 
             buffer.addvalue();
@@ -1044,21 +1042,21 @@ pub const State = opaque {
         }
     }
 
-    pub fn requiref(L: *State, module: [:0]const u8, comptime openf: anytype, global: bool) void {
+    pub fn requiref(L: *State, module: [:0]const u8, openf: CFn, global: bool) void {
         if (c.LUA_VERSION_NUM >= 503) {
-            c.luaL_requiref(to(L), module, wrapCFn(openf), @boolToInt(global));
+            c.luaL_requiref(to(L), module, openf, @intFromBool(global));
         }
 
         const scheck = StackCheck.init(L);
-        defer scheck.check(L, 1);
+        defer _ = scheck.check(requiref, L, 1);
 
-        assert(L.getglobal("package") == .table);
-        assert(L.getfield(-1, "loaded") == .table);
+        if (L.getglobal("package") != .table) return;
+        if (L.getfield(-1, "loaded") != .table) return;
         _ = L.getfield(-1, module);
         if (!L.toboolean(-1)) {
             L.pop(1);
-            L.pushcfunction(wrapCFn(openf));
-            L.pushlstring(module);
+            L.pushclosure_unwrapped(openf, 0);
+            L.pushstring(module);
             L.call(1, 1);
             L.pushvalue(-1);
             L.setfield(-3, module);
@@ -1073,12 +1071,16 @@ pub const State = opaque {
         L.pop(2);
     }
 
-    pub fn typenameOf(L: *State, idx: Index) [:0]const u8 {
-        return L.typename(L.typeOf(idx));
+    pub fn typenameof(L: *State, idx: Index) [:0]const u8 {
+        return @tagName(L.typeof(idx));
     }
 
-    pub fn getmetatableFor(L: *State, tname: [:0]const u8) Type {
+    pub fn getmetatablefor(L: *State, tname: [:0]const u8) Type {
         return L.getfield(REGISTRYINDEX, tname);
+    }
+
+    pub fn openlibs(L: *State) void {
+        c.luaL_openlibs(to(L));
     }
 
     // convienience functions
@@ -1088,27 +1090,28 @@ pub const State = opaque {
         switch (@typeInfo(T)) {
             .Void, .Null => L.pushnil(),
             .Bool => L.pushboolean(value),
-            .Int, .ComptimeInt => L.pushinteger(@intCast(Integer, value)),
-            .Float, .ComptimeFloat => L.pushnumber(@floatCast(Number, value)),
+            .Int, .ComptimeInt => L.pushinteger(@intCast(value)),
+            .Float, .ComptimeFloat => L.pushnumber(@floatCast(value)),
             .Pointer => |info| {
                 if (comptime std.meta.trait.isZigString(T)) {
-                    return L.pushlstring(value);
+                    return L.pushstring(value);
                 }
 
                 switch (info.size) {
                     .One, .Many, .C => L.pushlightuserdata(value),
                     .Slice => {
-                        L.createtable(@intCast(Size, value.len), 0);
+                        L.createtable(@intCast(value.len), 0);
 
                         for (value, 0..) |item, i| {
+                            const idx = i + 1;
                             L.push(item);
-                            L.rawseti(-2, i + 1);
+                            L.rawseti(-2, @intCast(idx));
                         }
                     },
                 }
             },
             .Array, .Vector => {
-                L.createtable(value.len, 0);
+                L.createtable(@intCast(value.len), 0);
 
                 for (value, 0..) |item, i| {
                     L.push(item);
@@ -1116,16 +1119,16 @@ pub const State = opaque {
                 }
             },
             .Struct => |info| if (info.is_tuple) {
-                L.createtable(info.fields.len, 0);
+                L.createtable(@intCast(info.fields.len), 0);
 
                 inline for (value, 0..) |item, i| {
                     L.push(item);
                     L.rawseti(-2, i + 1);
                 }
             } else if (info.backing_integer) |int_t| {
-                L.pushinteger(@intCast(Integer, @bitCast(int_t, value)));
+                L.pushinteger(@intCast(@as(int_t, @bitCast(value))));
             } else {
-                L.createtable(0, info.fields.len);
+                L.createtable(0, @intCast(info.fields.len));
 
                 inline for (info.fields) |field| {
                     L.push(@field(value, field.name));
@@ -1137,8 +1140,8 @@ pub const State = opaque {
             } else {
                 L.pushnil();
             },
-            .ErrorSet => L.pushlstring(@errorName(value)),
-            .Enum => L.pushinteger(@enumToInt(value)),
+            .ErrorSet => L.pushstring(@errorName(value)),
+            .Enum => L.pushinteger(@intFromEnum(value)),
             .Union => {
                 L.createtable(0, 1);
 
@@ -1150,10 +1153,10 @@ pub const State = opaque {
                 }
             },
             .Fn => L.pushclosure_unwrapped(wrapAnyFn(value), 0),
-            .EnumLiteral => L.pushlstring(@tagName(value)),
+            .EnumLiteral => L.pushstring(@tagName(value)),
             .Type => switch (@typeInfo(value)) {
                 .Struct => |info| {
-                    L.createtable(0, info.decls.len);
+                    L.createtable(0, @intCast(info.decls.len));
 
                     inline for (info.decls) |decl| {
                         if (decl.is_pub) {
@@ -1163,7 +1166,7 @@ pub const State = opaque {
                     }
                 },
                 .Enum => |info| {
-                    L.createtable(0, info.fields.len);
+                    L.createtable(0, @intCast(info.fields.len));
 
                     inline for (info.fields) |field| {
                         L.push(field.value);
@@ -1171,7 +1174,7 @@ pub const State = opaque {
                     }
                 },
                 .ErrorSet => |info| if (info) |fields| {
-                    L.createtable(fields.len, 0);
+                    L.createtable(@intCast(fields.len), 0);
 
                     inline for (fields, 0..) |field, i| {
                         L.push(field.name);
@@ -1195,7 +1198,7 @@ pub const State = opaque {
     pub fn registerResource(L: *State, comptime T: type, comptime metatable: ?type) void {
         const tname = literal(@typeName(T));
 
-        if (L.getmetatableFor(tname) != .table) {
+        if (L.getmetatablefor(tname) != .table) {
             L.pop(1);
 
             if (metatable) |mt| {
@@ -1216,6 +1219,8 @@ pub const State = opaque {
             L.pushvalue(-1);
             L.setfield(c.LUA_REGISTRYINDEX, tname);
         }
+
+        L.pop(1);
     }
 
     pub fn resource(L: *State, comptime T: type) *align(@alignOf(usize)) T {
@@ -1224,23 +1229,21 @@ pub const State = opaque {
         const size = @sizeOf(T);
         const ptr = L.newuserdata(size);
 
-        assert(L.getmetatableFor(tname) == .table);
+        assert(L.getmetatablefor(tname) == .table);
         L.setmetatable(-2);
 
-        return @ptrCast(*align(@alignOf(usize)) T, @alignCast(@alignOf(usize), ptr));
+        return @ptrCast(@alignCast(ptr));
     }
 
     pub fn pusherror(L: *State, err: anyerror) void {
         L.pushnil();
-        L.pushlstring(@errorName(err));
+        L.pushstring(@errorName(err));
     }
-
-    const empty_allocator = Allocator{ .ptr = @intToPtr(*anyopaque, std.math.maxInt(usize)), .vtable = undefined };
 
     fn check_typeerror(L: *State, comptime source: []const u8, comptime expected: []const u8, index: Index) noreturn {
         const message = source ++ ": expected " ++ expected ++ ", got %s";
         const stripped = if (source.len == 0) message[2..] else message[0..];
-        _ = L.pushfstring(stripped, .{L.typenameOf(index).ptr});
+        _ = L.pushfstring(stripped, .{L.typenameof(index).ptr});
         L.@"error"();
     }
 
@@ -1280,7 +1283,7 @@ pub const State = opaque {
                 if (!L.isnumber(idx))
                     L.check_typeerror(name, "number", idx);
 
-                return @floatCast(T, L.tonumber(idx));
+                return @floatCast(L.tonumber(idx));
             },
             .Array => |info| {
                 if (info.child == u8 and L.isstring(idx)) {
@@ -1288,7 +1291,7 @@ pub const State = opaque {
 
                     const str = L.tolstring(idx).?;
                     if (str.len != info.len)
-                        L.check_numerror(name, err_len, @intCast(Integer, str.len));
+                        L.check_numerror(name, err_len, @intCast(str.len));
 
                     return str[0..info.len].*;
                 }
@@ -1298,14 +1301,14 @@ pub const State = opaque {
 
                 const err_len = comptime comptimePrint("table of length {d}", .{info.len});
 
-                const tlen = L.lenOf(idx);
+                const tlen = L.lenof(idx);
                 if (tlen != info.len)
                     L.check_numerror(name, err_len, tlen);
 
                 var res: T = undefined;
 
                 for (res[0..], 0..) |*slot, i| {
-                    _ = L.rawgeti(idx, @intCast(c_int, i) + 1);
+                    _ = L.rawgeti(idx, @as(Integer, @intCast(i)) + 1);
                     slot.* = L.checkInternal(name ++ "[]", info.child, -1, allocator);
                 }
 
@@ -1347,7 +1350,7 @@ pub const State = opaque {
                         if (!L.isuserdata(idx))
                             L.check_typeerror(name, "userdata", idx);
 
-                        return @ptrCast(T, L.touserdata(idx) orelse unreachable);
+                        return @ptrCast(L.touserdata(idx).? orelse unreachable);
                     },
                     .Slice => {
                         if (!L.istable(idx))
@@ -1355,14 +1358,14 @@ pub const State = opaque {
 
                         if (allocator == null) @compileError("cannot allocate slice, use checkAlloc instead");
 
-                        const sentinel = if (info.sentinel) |ptr| @ptrCast(*const info.child, ptr).* else null;
+                        const sentinel = if (info.sentinel) |ptr| @as(*const info.child, @ptrCast(ptr)).* else null;
 
-                        const slen = L.lenOf(idx);
+                        const slen = L.lenof(idx);
                         const ptr = allocator.allocWithOptions(info.child, slen, info.alignment, sentinel) catch
                             L.throw("out of memory", .{});
 
                         for (ptr[0..], 0..) |*slot, i| {
-                            _ = L.rawgeti(idx, @intCast(c_int, i) + 1);
+                            _ = L.rawgeti(idx, @as(Integer, @intCast(i)) + 1);
                             slot.* = L.checkInternal(name ++ "[]", info.child, -1, allocator);
                         }
 
@@ -1378,8 +1381,8 @@ pub const State = opaque {
             },
             .Enum => |info| {
                 if (L.isnumber(idx)) {
-                    const value = @intCast(info.tag_type, L.tointeger(idx));
-                    return @intToEnum(T, value);
+                    const value = @as(info.tag_type, @intCast(L.tointeger(idx)));
+                    return @as(T, @enumFromInt(value));
                 } else if (L.isstring(idx)) {
                     const value = L.tolstring(idx) orelse unreachable;
 
@@ -1401,7 +1404,7 @@ pub const State = opaque {
 
     pub fn checkResource(L: *State, comptime T: type, arg: Index) *align(@alignOf(usize)) T {
         const ptr = c.luaL_checkudata(to(L), arg, literal(@typeName(T))).?;
-        return @ptrCast(*align(@alignOf(usize)) T, @alignCast(@alignOf(usize), ptr));
+        return @ptrCast(@alignCast(ptr));
     }
 };
 
@@ -1431,29 +1434,32 @@ pub fn wrapCFn(comptime func: anytype) State.CFn {
 
     return struct {
         fn wrapped(L_opt: ?*c.lua_State) callconv(.C) c_int {
-            const L = @ptrCast(*State, L_opt.?);
+            const L: *State = @ptrCast(L_opt.?);
 
+            const scheck = StackCheck.init(L);
             const result = @call(.always_inline, func, .{L});
 
             const T = @TypeOf(result);
-            if (T == c_int) return result;
+            if (T == c_int)
+                return scheck.check(func, L, result);
 
             switch (@typeInfo(T)) {
-                .Void => return 0,
+                .Void => return scheck.check(func, L, 0),
                 .ErrorUnion => |info| {
                     const actual_result = result catch |err| {
                         L.pusherror(err);
-                        return 2;
+
+                        return scheck.check(func, L, 2);
                     };
 
-                    if (info.payload == c_int) return actual_result;
+                    if (info.payload == c_int) return scheck.check(func, L, actual_result);
 
                     L.push(actual_result);
-                    return 1;
+                    return scheck.check(func, L, 1);
                 },
                 else => {
                     L.push(result);
-                    return 1;
+                    return scheck.check(func, L, 1);
                 },
             }
         }
@@ -1464,10 +1470,10 @@ const Allocator = std.mem.Allocator;
 pub fn luaAlloc(ud: ?*anyopaque, ptr: ?*anyopaque, oldsize: usize, newsize: usize) callconv(.C) ?*anyopaque {
     assert(ud != null);
 
-    const allocator = @ptrCast(*Allocator, @alignCast(@alignOf(Allocator), ud.?));
+    const allocator: *Allocator = @ptrCast(@alignCast(ud.?));
     const alignment = @alignOf(c.max_align_t);
 
-    const ptr_aligned = @ptrCast(?[*]align(alignment) u8, @alignCast(alignment, ptr));
+    const ptr_aligned: ?[*]align(alignment) u8 = @ptrCast(@alignCast(ptr));
 
     if (ptr_aligned) |prev_ptr| {
         const prev_slice = prev_ptr[0..oldsize];
@@ -1508,8 +1514,8 @@ pub fn LuaReader(comptime Reader: anytype) type {
             assert(ud != null);
             assert(size != null);
 
-            const L = @ptrCast(*State, L_opt.?);
-            const wrapper = @ptrCast(*Self, @alignCast(@alignOf(Self), ud.?));
+            const L: *State = @ptrCast(L_opt.?);
+            const wrapper: *Self = @ptrCast(@alignCast(ud.?));
 
             if (wrapper.has_byte) {
                 wrapper.has_byte = false;
@@ -1533,10 +1539,10 @@ pub fn LuaReader(comptime Reader: anytype) type {
     };
 }
 
-pub fn luaReader(reader: anytype) @TypeOf(reader).Error!LuaReader(@TypeOf(reader)) {
+pub fn luaReader(reader: anytype) !LuaReader(@TypeOf(reader)) {
     const byte = try reader.readByte();
 
-    const mode = switch (byte) {
+    const mode: State.LoadMode = switch (byte) {
         c.LUA_SIGNATURE[0] => .binary,
         else => .text,
     };
@@ -1545,7 +1551,7 @@ pub fn luaReader(reader: anytype) @TypeOf(reader).Error!LuaReader(@TypeOf(reader
     wrapper.buf[0] = byte;
     wrapper.has_byte = true;
 
-    return;
+    return wrapper;
 }
 
 /// Wraps a std.io.Writer to be used as a Lua writer function.
@@ -1559,14 +1565,15 @@ pub fn LuaWriter(comptime Writer: anytype) type {
     return struct {
         const Self = @This();
 
-        pub fn write(L_opt: ?*c.lua_State, p: ?[*]const u8, sz: usize, ud: ?*anyopaque) callconv(.C) c_int {
+        pub fn write(L_opt: ?*c.lua_State, p: ?*const anyopaque, sz: usize, ud: ?*anyopaque) callconv(.C) c_int {
             assert(ud != null);
             assert(p != null);
 
-            const L = @ptrCast(*State, L_opt.?);
-            const wrapper = @ptrCast(*Self, @alignCast(@alignOf(Self), ud.?));
+            const L: *State = @ptrCast(L_opt.?);
+            const wrapper: *Self = @ptrCast(@alignCast(ud.?));
+            const ptr: [*]const u8 = @ptrCast(p.?);
 
-            wrapper.writer.writeAll(p.?[0..sz]) catch |err| {
+            wrapper.writer.writeAll(ptr[0..sz]) catch |err| {
                 L.throw(@errorName(err), .{});
             };
 
@@ -1581,8 +1588,8 @@ pub fn luaWriter(writer: anytype) LuaWriter(@TypeOf(writer)) {
     return LuaWriter(@TypeOf(writer)){ .writer = writer };
 }
 
-pub fn exportAs(comptime func: anytype, comptime name: []const u8) void {
-    _ = struct {
+pub fn exportAs(comptime func: anytype, comptime name: []const u8) State.CFn {
+    return struct {
         fn luaopen(L: ?*c.lua_State) callconv(.C) c_int {
             const fnc = comptime wrapCFn(func) orelse unreachable;
 
@@ -1592,12 +1599,11 @@ pub fn exportAs(comptime func: anytype, comptime name: []const u8) void {
         comptime {
             @export(luaopen, .{ .name = "luaopen_" ++ name });
         }
-    };
+    }.luaopen;
 }
 
 pub const Buffer = struct {
     state: *State,
-    check: StackCheck,
     buf: c.luaL_Buffer,
 
     pub fn init(L: *State) Buffer {
@@ -1607,13 +1613,10 @@ pub const Buffer = struct {
 
         c.luaL_buffinit(L.to(), &res.buf);
 
-        res.check = StackCheck.init(L);
         return res;
     }
 
     pub fn reserve(buffer: *Buffer, max_size: usize) []u8 {
-        buffer.check.check(buffer.state, 0);
-
         const ptr = if (c.LUA_VERSION_NUM >= 502)
             c.luaL_prepbuffsize(&buffer.buf, max_size)
         else
@@ -1624,21 +1627,16 @@ pub const Buffer = struct {
         else
             @min(max_size, c.LUAL_BUFFERSIZE);
 
-        buffer.check = StackCheck.init(buffer.state);
         return ptr[0..clamped_len];
     }
 
     pub fn commit(buffer: *Buffer, size: usize) void {
-        buffer.check.check(buffer.state, 0);
-
         // TODO: translate-c bug: c.luaL_addsize(&buffer.buf, size);
         if (c.LUA_VERSION_NUM >= 502) {
             buffer.buf.n += size;
         } else {
             buffer.buf.p += size;
         }
-
-        buffer.check = StackCheck.init(buffer.state);
     }
 
     pub fn addchar(buffer: *Buffer, char: u8) void {
@@ -1648,24 +1646,14 @@ pub const Buffer = struct {
     }
 
     pub fn addstring(buffer: *Buffer, str: []const u8) void {
-        buffer.check.check(buffer.state, 0);
-
         c.luaL_addlstring(&buffer.buf, str.ptr, str.len);
-
-        buffer.check = StackCheck.init(buffer.state);
     }
 
     pub fn addvalue(buffer: *Buffer) void {
-        buffer.check.check(buffer.state, 1); // one item should be on the stack
-
         c.luaL_addvalue(&buffer.buf);
-
-        buffer.check = StackCheck.init(buffer.state);
     }
 
     pub fn final(buffer: *Buffer) void {
-        buffer.check.check(buffer.state, 0);
-
         c.luaL_pushresult(&buffer.buf);
     }
 
@@ -1674,7 +1662,7 @@ pub const Buffer = struct {
         assert(ud != null);
         assert(p != null);
 
-        const buf = @ptrCast(*Buffer, @alignCast(@alignOf(Buffer), ud.?));
+        const buf: *Buffer = @ptrCast(@alignCast(ud.?));
         buf.addstring(p.?[0..sz]);
 
         return 0;
@@ -1688,11 +1676,30 @@ pub const StackCheck = struct {
         return .{ .top = if (std.debug.runtime_safety) L.gettop() else {} };
     }
 
-    pub fn check(self: StackCheck, L: *State, pushed: u8) void {
+    pub fn check(self: StackCheck, comptime func: anytype, L: *State, pushed: c_int) c_int {
         if (!std.debug.runtime_safety) return;
 
         const new_top = L.gettop();
-        assert(new_top == self.top + pushed);
+        if (new_top != self.top + pushed) {
+            debuginfo: {
+                const address = @intFromPtr(&func);
+
+                const debug_info = std.debug.getSelfDebugInfo() catch break :debuginfo;
+                const module = debug_info.getModuleForAddress(address) catch break :debuginfo;
+                const symbol_info = module.getSymbolAtAddress(debug_info.allocator, address) catch break :debuginfo;
+                defer symbol_info.deinit(debug_info.allocator);
+
+                if (symbol_info.line_info) |info| {
+                    std.debug.panic("stack check failed in {s} at {s}:{d} (expected {d} items but {d} were pushed)", .{ symbol_info.symbol_name, info.file_name, info.line, pushed, new_top - self.top });
+                }
+
+                std.debug.panic("stack check failed in {s} (expected {d} items but {d} were pushed)", .{ symbol_info.symbol_name, pushed, new_top - self.top });
+            }
+
+            std.debug.panic("stack check failed (expected {d} items but {d} were pushed)", .{ pushed, new_top - self.top });
+        }
+
+        return pushed;
     }
 };
 
