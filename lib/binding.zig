@@ -554,7 +554,7 @@ pub const State = opaque {
 
     pub fn newuserdata(L: *State, size: Size) *anyopaque {
         if (c.LUA_VERSION_NUM >= 504) {
-            return c.lua_newuserdatauv(to(L), size, 0).?;
+            return c.lua_newuserdatauv(to(L), size, 1).?;
         }
 
         return c.lua_newuserdata(to(L), size).?;
@@ -588,7 +588,15 @@ pub const State = opaque {
 
         if (c.LUA_VERSION_NUM >= 502) {
             c.lua_getuservalue(to(L), index);
-            return L.typeof(-1);
+
+            if (L.istable(-1)) {
+                const typ = L.rawgeti(-1, 1);
+                L.remove(-2);
+
+                return typ;
+            }
+
+            return .nil;
         }
 
         if (!L.isfulluserdata(index))
@@ -652,12 +660,20 @@ pub const State = opaque {
     }
 
     pub fn setuservalue(L: *State, index: Index) void {
-        if (c.LUA_VERSION_NUM >= 504) {
-            _ = c.lua_setiuservalue(to(L), index, 1);
+        if (c.LUA_VERSION_NUM >= 503) {
+            _ = c.lua_setuservalue(to(L), index);
             return;
         }
 
         if (c.LUA_VERSION_NUM >= 502) {
+            c.lua_getuservalue(to(L), index);
+            if (!L.istable(-1)) {
+                L.pop(1);
+                L.newtable();
+            }
+
+            L.insert(-2);
+            L.rawseti(-2, 1);
             return c.lua_setuservalue(to(L), index);
         }
 

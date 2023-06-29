@@ -73,7 +73,7 @@ pub const ThreadArgument = union(enum) {
 
                 _ = L.getuservalue(arg);
                 const uvalue = try allocator.create(ThreadArgument);
-                uvalue.* = try ThreadArgument.pull(L, -1);
+                uvalue.* = try ThreadArgument.pull(L, L.absindex(-1));
                 L.pop(1);
 
                 return .{ .userdata = .{
@@ -139,8 +139,6 @@ fn threadMain(bytecode: []const u8, arguments: []ThreadArgument, package: Packag
     L.openlibs();
 
     {
-        const scheck = lua.StackCheck.init(L);
-        defer _ = scheck.check(threadMain, L, 0);
         std.debug.assert(L.getglobal("package") == .table);
 
         L.push(package.cpath);
@@ -168,17 +166,15 @@ fn threadMain(bytecode: []const u8, arguments: []ThreadArgument, package: Packag
         var preload = package.preload;
         preload.deinit();
 
-        L.pop(2);
-
         if (std.c.dlsym(null, "luaopen_luv")) |luaopen_luv| {
             L.requiref("uv", @ptrCast(@alignCast(luaopen_luv)), false);
-            L.pop(1);
         }
 
         if (std.c.dlsym(null, "luaopen_luz")) |luaopen_luz| {
             L.requiref("luz", @ptrCast(@alignCast(luaopen_luz)), false);
-            L.pop(1);
         }
+
+        L.pop(@intCast(L.gettop()));
     }
 
     var fbs = std.io.fixedBufferStream(bytecode);
