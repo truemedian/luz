@@ -1451,11 +1451,16 @@ pub fn wrapCFn(comptime func: anytype) State.CFn {
     return struct {
         fn wrapped(L_opt: ?*c.lua_State) callconv(.C) c_int {
             const L: *State = @ptrCast(L_opt.?);
+            const T = @typeInfo(@TypeOf(func)).Fn.return_type.?;
+
+            const top = switch (@typeInfo(T)) {
+                .ErrorUnion => L.gettop(),
+                else => {},
+            };
 
             const scheck = StackCheck.init(L);
             const result = @call(.always_inline, func, .{L});
 
-            const T = @TypeOf(result);
             if (T == c_int)
                 return scheck.check(func, L, result);
 
@@ -1463,6 +1468,7 @@ pub fn wrapCFn(comptime func: anytype) State.CFn {
                 .Void => return scheck.check(func, L, 0),
                 .ErrorUnion => |info| {
                     const actual_result = result catch |err| {
+                        L.settop(top);
                         L.pusherror(err);
 
                         return scheck.check(func, L, 2);

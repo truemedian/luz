@@ -124,6 +124,20 @@ pub const ThreadArgument = union(enum) {
             },
         }
     }
+
+    pub fn deinit(arg: ThreadArgument) void {
+        switch (arg) {
+            .nil, .boolean, .integer, .number, .lightuserdata, .cfunction => {},
+            .string, .function => |value| allocator.free(value),
+            .userdata => |info| {
+                allocator.free(info.block);
+                allocator.free(info.name);
+
+                info.uservalue.deinit();
+                allocator.destroy(info.uservalue);
+            },
+        }
+    }
 };
 
 const PackageEnvironment = struct {
@@ -211,12 +225,15 @@ pub const bindings = struct {
             defer L.pop(1);
 
             var bytecode_buf = std.ArrayList(u8).init(allocator);
+            errdefer bytecode_buf.deinit();
+
             var writer = lua.luaWriter(bytecode_buf.writer());
 
             std.debug.assert(L.dump(&writer, false) == .ok);
 
             break :blk try bytecode_buf.toOwnedSlice();
         };
+        errdefer allocator.free(bytecode);
 
         const args = try allocator.alloc(ThreadArgument, @intCast(L.gettop() - 1));
         errdefer allocator.free(args);
@@ -224,8 +241,19 @@ pub const bindings = struct {
         for (args, 0..) |*slot, i| {
             slot.* = try ThreadArgument.pull(L, @intCast(i + 2));
         }
+        errdefer for (args) |slot| slot.deinit();
 
         var env: PackageEnvironment = .{ .cpath = "", .path = "", .preload = std.StringHashMap(State.CFn).init(allocator) };
+        errdefer allocator.free(env.cpath);
+        errdefer allocator.free(env.path);
+        errdefer {
+            var it = env.preload.keyIterator();
+            while (it.next()) |key| {
+                allocator.free(key.*);
+            }
+            env.preload.deinit();
+        }
+
         if (L.getglobal("package") == .table) {
             if (L.getfield(-1, "cpath") == .string) {
                 env.cpath = try allocator.dupe(u8, L.tolstring(-1).?);
@@ -244,6 +272,7 @@ pub const bindings = struct {
                 while (L.next(-2)) {
                     if (L.iscfunction(-1) and L.typeof(-2) == .string) {
                         const name = try allocator.dupe(u8, L.tolstring(-2).?);
+
                         try env.preload.put(name, L.tocfunction(-1));
                     }
 
@@ -366,10 +395,12 @@ pub const ThreadMail = struct {
 
             while (!mail.available)
                 mail.condition.timedWait(&mail.mutex, timeout) catch {
-                    mail.mutex.unlock();
-                    L.throw("timed out", .{});
+                    L.pushboolean(false);
+                    L.pushstring("timed out");
+                    return 2;
                 };
 
+            L.pushboolean(true);
             for (mail.args) |arg| try arg.push(L);
 
             mail.available = false;
@@ -379,7 +410,7 @@ pub const ThreadMail = struct {
             while (mail.acknowledged)
                 mail.condition.wait(&mail.mutex);
 
-            return @intCast(mail.args.len);
+            return @intCast(mail.args.len + 1);
         }
 
         /// send(self: *ThreadMail, ...) void
