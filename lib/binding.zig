@@ -240,7 +240,7 @@ pub const State = opaque {
     }
 
     pub fn pop(L: *State, n: Size) void {
-        return c.lua_pop(to(L), @as(Index, n));
+        return c.lua_pop(to(L), n);
     }
 
     // access functions (stack -> zig)
@@ -1398,7 +1398,7 @@ pub const State = opaque {
             .Enum => |info| {
                 if (L.isnumber(idx)) {
                     const value = @as(info.tag_type, @intCast(L.tointeger(idx)));
-                    return @as(T, @enumFromInt(value));
+                    return @enumFromInt(value);
                 } else if (L.isstring(idx)) {
                     const value = L.tolstring(idx) orelse unreachable;
 
